@@ -1,11 +1,14 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 import numpy as np
 import math
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
-
+import csv
+from datetime import datetime
+import os
+import subprocess
 
 class BarrierMethodApp:
     def __init__(self, root):
@@ -14,22 +17,23 @@ class BarrierMethodApp:
         self.root.geometry("1600x1000")
         
         # Параметры по умолчанию
-        self.mu = tk.DoubleVar(value=10.0)
+        self.mu = tk.DoubleVar(value=10)
         self.beta = tk.DoubleVar(value=0.1)
-        self.epsilon = tk.DoubleVar(value=0.001)
+        self.epsilon = tk.DoubleVar(value=0.1)
         self.learning_rate = tk.DoubleVar(value=0.01)
-        self.max_iter_gd = tk.IntVar(value=1000)
+        self.max_iter_gd = tk.IntVar(value=100)
         self.x0_1 = tk.DoubleVar(value=0.0)
         self.x0_2 = tk.DoubleVar(value=0.0)
         
         # Данные для таблицы
         self.results = []
+        self.export_btn = None
         
         self.setup_ui()
         
     def setup_ui(self):
         """Создание интерфейса из трёх частей"""
-        # Основной контейнер (используем panedwindow для возможности изменения размеров)
+        # Основной контейнер
         main_paned = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
         main_paned.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         
@@ -46,7 +50,6 @@ class BarrierMethodApp:
         main_paned.add(right_frame, weight=4)
         
         # === Заполнение левой панели ===
-        # Создаем Canvas с Scrollbar для прокрутки левой панели
         left_canvas = tk.Canvas(left_frame)
         left_scrollbar = ttk.Scrollbar(left_frame, orient="vertical", command=left_canvas.yview)
         left_scrollable_frame = ttk.Frame(left_canvas)
@@ -99,18 +102,18 @@ class BarrierMethodApp:
         ttk.Label(x0_frame, text="x₂ =", font=("Arial", 10)).pack(side=tk.LEFT, padx=(15, 0))
         ttk.Entry(x0_frame, textvariable=self.x0_2, width=8, font=("Arial", 10)).pack(side=tk.LEFT, padx=5)
         
-        # Параметр μ (уменьшенная ширина)
+        # Параметр μ
         ttk.Label(param_frame, text="Параметр μ:", font=("Arial", 10)).grid(row=6, column=0, sticky="w", pady=8)
         mu_entry = ttk.Entry(param_frame, textvariable=self.mu, width=10, font=("Arial", 10))
         mu_entry.grid(row=6, column=1, pady=8, sticky="w")
         
-        # Параметр β (уменьшенная ширина)
+        # Параметр β
         ttk.Label(param_frame, text="Параметр β:", font=("Arial", 10)).grid(row=7, column=0, sticky="w", pady=8)
         beta_entry = ttk.Entry(param_frame, textvariable=self.beta, width=10, font=("Arial", 10))
         beta_entry.grid(row=7, column=1, pady=8, sticky="w")
         
-        # ε (уменьшенная ширина)
-        ttk.Label(param_frame, text="ε (критерий остановки):", font=("Arial", 10)).grid(row=8, column=0, sticky="w", pady=8)
+        # ε
+        ttk.Label(param_frame, text="Критерий остановки ε:", font=("Arial", 10)).grid(row=8, column=0, sticky="w", pady=8)
         eps_entry = ttk.Entry(param_frame, textvariable=self.epsilon, width=10, font=("Arial", 10))
         eps_entry.grid(row=8, column=1, pady=8, sticky="w")
         
@@ -118,51 +121,49 @@ class BarrierMethodApp:
         
         ttk.Label(param_frame, text="ПАРАМЕТРЫ ГРАДИЕНТНОГО СПУСКА:", font=("Arial", 11, "bold")).grid(row=10, column=0, columnspan=2, pady=(0, 10), sticky="w")
         
-        # Шаг (уменьшенная ширина)
+        # Шаг
         ttk.Label(param_frame, text="Шаг (learning rate):", font=("Arial", 10)).grid(row=11, column=0, sticky="w", pady=8)
         lr_entry = ttk.Entry(param_frame, textvariable=self.learning_rate, width=10, font=("Arial", 10))
         lr_entry.grid(row=11, column=1, pady=8, sticky="w")
         
-        # Макс. итераций (уменьшенная ширина)
+        # Макс. итераций
         ttk.Label(param_frame, text="Макс. итераций спуска:", font=("Arial", 10)).grid(row=12, column=0, sticky="w", pady=8)
         max_iter_entry = ttk.Entry(param_frame, textvariable=self.max_iter_gd, width=10, font=("Arial", 10))
         max_iter_entry.grid(row=12, column=1, pady=8, sticky="w")
         
-        # Кнопка запуска
+        # Кнопки
         btn_frame = ttk.Frame(param_frame)
         btn_frame.grid(row=13, column=0, columnspan=2, pady=20)
-        ttk.Button(btn_frame, text="▶ ЗАПУСТИТЬ МЕТОД", command=self.run_barrier_method, width=25).pack()
-        
+
+        ttk.Button(btn_frame, text="ЗАПУСТИТЬ МЕТОД", command=self.run_barrier_method, width=25).pack(pady=2)
+
+        ttk.Button(btn_frame, text="ЭКСПОРТ В CSV", command=self.export_to_csv, width=25, state='disabled').pack(pady=2)
+        self.export_btn = btn_frame.winfo_children()[-1]  # Сохраняем ссылку на кнопку
+                
         # === Центральная панель с таблицей ===
         table_container = ttk.Frame(center_frame)
         table_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        
+
         # Скроллбары
         scroll_y = ttk.Scrollbar(table_container)
         scroll_y.pack(side=tk.RIGHT, fill=tk.Y)
-        
+
         scroll_x = ttk.Scrollbar(table_container, orient=tk.HORIZONTAL)
         scroll_x.pack(side=tk.BOTTOM, fill=tk.X)
-        
-        self.tree = ttk.Treeview(table_container, 
-                                  columns=("k", "mu", "x1", "x2", "f", "B", "Phi", "muB"),
-                                  show="headings",
-                                  yscrollcommand=scroll_y.set,
-                                  xscrollcommand=scroll_x.set)
+                
+        self.tree = ttk.Treeview(table_container, columns=("k", "mu", "point", "f", "B", "Phi", "muB"), show="headings", yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
         
         scroll_y.config(command=self.tree.yview)
         scroll_x.config(command=self.tree.xview)
         
-        # Определение колонок
         columns_def = [
-            ("k", "K", 50),
+            ("k", "K", 40),
             ("mu", "μₖ", 80),
-            ("x1", "Xμₖ (x₁)", 100),
-            ("x2", "Xμₖ (x₂)", 100),
-            ("f", "F(Xμₖ)", 90),
+            ("point", "Xμₖ = Xₖ₊₁", 140),
+            ("f", "F(Xμₖ)", 70),
             ("B", "B(Xμₖ)", 90),
-            ("Phi", "Ф(μₖ)", 90),
-            ("muB", "μₖ·B(Xμₖ)", 100)
+            ("Phi", "Ф(μₖ)", 80),
+            ("muB", "μₖ·B(Xμₖ)", 70)
         ]
         
         for col, text, width in columns_def:
@@ -284,7 +285,7 @@ class BarrierMethodApp:
         
         return x, history
     
-    # === Основной метод барьерных функций ===
+    # === Метод барьерных функций ===
     def run_barrier_method(self):
         """Запуск метода барьерных функций"""
         try:
@@ -298,23 +299,19 @@ class BarrierMethodApp:
             
             # Проверка начальной точки
             if not self.is_feasible(x_start):
-                messagebox.showerror("Ошибка", 
-                                    "Начальная точка недопустима!\n"
-                                    "Она должна удовлетворять g₁(x) < 0 и g₂(x) < 0\n\n"
-                                    "Примеры допустимых точек:\n"
-                                    "x₁ = 0, x₂ = 0\n"
-                                    "x₁ = 0.5, x₂ = 0.5\n"
-                                    "x₁ = -1, x₂ = 0")
+                messagebox.showerror("Ошибка", "Начальная точка недопустима!\nОна должна удовлетворять g₁(x) < 0 и g₂(x) < 0\n")
                 return
             
             self.results = []
-            # Очищаем таблицу
             for item in self.tree.get_children():
                 self.tree.delete(item)
             
+            if self.export_btn:
+                self.export_btn.config(state='disabled')
+            
             x_current = x_start.copy()
             k = 1
-            self.xk_points = [x_current.copy()]  # Только точки Xk (результаты внешних итераций)
+            self.xk_points = [x_current.copy()]  # Только точки Xk
             
             # Основной цикл
             while True:
@@ -342,18 +339,16 @@ class BarrierMethodApp:
                 self.xk_points.append(x_opt.copy())
                 
                 # Форматирование значений для таблицы
-                # Для μₖ - без лишних нулей
                 if mu == int(mu):
                     mu_str = f"{int(mu)}"
                 else:
                     mu_str = f"{mu:.6f}".rstrip('0').rstrip('.')
                 
-                # Добавление в таблицу с 4 знаками после запятой
+                # Добавление в таблицу
                 self.tree.insert("", tk.END, values=(
                     k,
                     mu_str,
-                    f"{x_opt[0]:.4f}",
-                    f"{x_opt[1]:.4f}",
+                    f"({x_opt[0]:.4f}; {x_opt[1]:.4f})",
                     f"{f_val:.4f}",
                     f"{b_val:.4f}",
                     f"{phi_val:.4f}",
@@ -380,6 +375,10 @@ class BarrierMethodApp:
             # Построение графика
             self.plot_results()
             
+            # Активировать кнопку экспорта
+            if self.export_btn:
+                self.export_btn.config(state='normal')
+                        
             messagebox.showinfo("Завершено", 
                               f"Метод барьерных функций завершён!\n"
                               f"Количество итераций: {k}\n"
@@ -417,35 +416,28 @@ class BarrierMethodApp:
         if hasattr(self, 'xk_points') and len(self.xk_points) > 0:
             points = np.array(self.xk_points)
             
-            # Рисуем линии, соединяющие Xk в порядке X0 -> X1 -> X2 -> ... -> Xk
+            # Рисуем линии, соединяющие Xk
             self.ax.plot(points[:, 0], points[:, 1], 'g-', linewidth=2.5, alpha=0.8, label='Траектория Xₖ')
             
             # Рисуем маркеры для каждой точки Xk
             for i, point in enumerate(points):
                 if i == 0:
-                    # Начальная точка X₀ - синего цвета
                     self.ax.plot(point[0], point[1], 'bo', markersize=10, label='X₀ (начальная)')
                 elif i == len(points) - 1:
-                    # Последняя точка X* - красного цвета
                     self.ax.plot(point[0], point[1], 'ro', markersize=12, label=f'X* (оптимальная)')
                 else:
-                    # Промежуточные точки Xk - черного цвета
+                    # Промежуточные точки Xk
                     self.ax.plot(point[0], point[1], 'ko', markersize=7)
             
             # Добавляем подписи над точками
             for i, point in enumerate(points):
                 if i == 0:
                     # Подпись X₀ над точкой
-                    self.ax.annotate('X₀', point, xytext=(0, 8), textcoords='offset points', 
-                                   fontsize=10, fontweight='bold', ha='center', color='blue')
+                    self.ax.annotate('X₀', point, xytext=(0, 8), textcoords='offset points', fontsize=10, fontweight='bold', ha='center', color='blue')
                 elif i == len(points) - 1:
-                    # Подпись X* над точкой
-                    self.ax.annotate('X*', point, xytext=(0, 8), textcoords='offset points', 
-                                   fontsize=10, fontweight='bold', ha='center', color='red')
+                    self.ax.annotate('X*', point, xytext=(0, 8), textcoords='offset points', fontsize=10, fontweight='bold', ha='center', color='red')
                 else:
-                    # Подпись Xᵢ над точкой (используем нижние индексы)
-                    self.ax.annotate(f'X_{i}', point, xytext=(0, 8), textcoords='offset points', 
-                                   fontsize=9, ha='center', color='black')
+                    self.ax.annotate(f'X_{i}', point, xytext=(0, 8), textcoords='offset points', fontsize=9, ha='center', color='black')
         
         # Настройка графика
         self.ax.set_xlabel('x₁', fontsize=11)
@@ -456,6 +448,58 @@ class BarrierMethodApp:
         self.ax.set_ylim(-3, 3)
         
         self.canvas.draw()
+        
+    def export_to_csv(self):
+        """Экспорт таблицы результатов в CSV файл"""
+        if not self.results:
+            messagebox.showwarning("Предупреждение", "Нет данных для экспорта. Сначала запустите метод.")
+            return
+        
+        filename = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            initialfile=f"barrier_method_results_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        )
+        
+        if filename:
+            try:
+                with open(filename, 'w', newline='', encoding='utf-8-sig') as csvfile:
+                    writer = csv.writer(csvfile, delimiter=';')
+                    # Заголовки
+                    writer.writerow(['K', 'μₖ', 'Xμₖ = Xₖ₊₁', 'F(Xμₖ)', 'B(Xμₖ)', 'Ф(μₖ)', 'μₖ·B(Xμₖ)'])
+                    
+                    # Данные
+                    for result in self.results:
+                        # Округляем μₖ до разумного количества знаков
+                        mu_value = result['mu']
+                        if abs(mu_value - round(mu_value, 6)) < 1e-10:
+                            mu_str = str(round(mu_value, 6))
+                        else:
+                            mu_str = f"{mu_value:.6f}".rstrip('0').rstrip('.')
+                        
+                        writer.writerow([
+                            result['k'],
+                            mu_str,
+                            f"({result['x'][0]:.6f}; {result['x'][1]:.6f})",
+                            f"{result['f']:.6f}",
+                            f"{result['b']:.6f}",
+                            f"{result['phi']:.6f}",
+                            f"{result['mu_b']:.6f}"
+                        ])
+                
+                # Открытие файла в программе по умолчанию
+                try:
+                    if os.name == 'nt':  # Windows
+                        os.startfile(filename)
+                    elif os.name == 'posix':  # macOS и Linux
+                        subprocess.run(['open', filename])  # macOS
+                        # subprocess.run(['xdg-open', filename])  # Linux (раскомментируйте для Linux)
+                except Exception as open_error:
+                    messagebox.showwarning("Предупреждение", f"Файл сохранён, но не удалось его открыть:\n{filename}\n")
+                
+                messagebox.showinfo("Успех", f"Таблица успешно экспортирована в:\n{filename}")
+            except Exception as e:
+                messagebox.showerror("Ошибка", f"Не удалось сохранить файл:\n{str(e)}")
 
 
 if __name__ == "__main__":
